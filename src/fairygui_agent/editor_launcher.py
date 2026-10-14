@@ -48,6 +48,35 @@ class EditorLauncher:
         except (OSError, ValueError):
             return None
 
+    @staticmethod
+    def _iter_instances(root: Path):
+        """遍历工程的实例记录，产出 (scope, status)；scope 为 <pid>-<startedAt>。"""
+        for path in (root / "instances").glob("*/status.json"):
+            status = EditorLauncher._read_json(path)
+            if not status or status.get("online") is not True or process_scope(status) != path.parent.name:
+                continue
+            project = status.get("project")
+            base_path = project.get("basePath") if isinstance(project, dict) else None
+            if not isinstance(base_path, str):
+                continue
+            yield path.parent.name, status, base_path
+
+    def live_project_instances(self, project_file: Path) -> list[dict[str, Any]]:
+        """本工程实例记录里仍存活的编辑器；忽略配置路径差异，用于诊断与防重复启动。"""
+        if sys.platform != "win32":
+            return []
+        root = project_file.parent / ".agent"
+        process_cache: dict[int, Any] = {}
+        found = []
+        for _scope, status, _base_path in self._iter_instances(root):
+            pid = status["editorProcessId"]
+            if pid not in process_cache:
+                process_cache[pid] = self._windows_processes().inspect(pid)
+            process = process_cache[pid]
+            if process and process.started_at == status["editorProcessStartedAt"]:
+                found.append(status)
+        return found
+
     def read_project_status(self, project_file: Path) -> dict[str, Any] | None:
         """Windows 只信任目标目录的实例记录，并核对实际 exe、PID 和启动时间。"""
         root = project_file.parent / ".agent"
@@ -56,16 +85,10 @@ class EditorLauncher:
         if not self.editor_path:
             raise EditorLaunchError("Windows 必须配置 FAIRYGUI_EDITOR_PATH 才能校验编辑器身份。")
         matches = []
-        for path in (root / "instances").glob("*/status.json"):
-            status = self._read_json(path)
-            if not status or status.get("online") is not True or process_scope(status) != path.parent.name:
+        for _scope, status, base_path in self._iter_instances(root):
+            if Path(base_path).resolve() != project_file.parent.resolve():
                 continue
-            project = status.get("project")
-            base_path = project.get("basePath") if isinstance(project, dict) else None
-            if not isinstance(base_path, str) or Path(base_path).resolve() != project_file.parent.resolve():
-                continue
-            process = self._windows_processes().inspect(status["editorProcessId"])
-            if process and process.executable and process.executable.resolve() == self.editor_path.resolve() and process.started_at == status["editorProcessStartedAt"]:
+            if self._is_configured_editor(status):
                 matches.append(status)
         if len(matches) > 1:
             pids = ", ".join(str(value["editorProcessId"]) for value in matches)
@@ -78,6 +101,12 @@ class EditorLauncher:
             return {**legacy, "online": False}
         return None
 
+    def _is_configured_editor(self, status: dict[str, Any]) -> bool:
+        """记录里的进程必须是配置路径上的编辑器，且启动时间与记录一致。"""
+        process = self._windows_processes().inspect(status["editorProcessId"])
+        return bool(process and process.executable and process.started_at == status["editorProcessStartedAt"]
+                    and process.executable.resolve() == self.editor_path.resolve())
+
     def _wake_windows(self, project_file: Path, *, allow_launch: bool) -> bool:
         processes = self._windows_processes()
         status = self.read_project_status(project_file)
@@ -86,6 +115,19 @@ class EditorLauncher:
             return True
         if not allow_launch:
             return False
+        # 本工程已有存活的编辑器实例，只是它的安装路径与 FAIRYGUI_EDITOR_PATH 不同：
+        # 这不是“身份不明的陌生进程”，命令队列可以照常送达，绝不能因此再开一个窗口。
+        adopted = self._adopt_live_instance(project_file)
+        if adopted is not None:
+            processes.activate(adopted["editorProcessId"])
+            return True
+        # 系统里还有别的 FairyGUI 进程时同样不再启动，避免多开抢同一个工程的状态与队列。
+        if processes.list_editors(self.editor_path):
+            raise EditorLaunchError(
+                f"已有 FairyGUI 进程在运行，但无法确认它打开的是 {project_file}。"
+                "请把它切到前台、确认打开的就是该工程并重新加载插件；Bridge 不会另开窗口，"
+                "也不会结束任何进程。"
+            )
         with processes.launch_guard(project_file) as acquired:
             if not acquired:
                 return False
@@ -94,8 +136,6 @@ class EditorLauncher:
             if status and status.get("online") is True and process_scope(status):
                 processes.activate(status["editorProcessId"])
                 return True
-            if processes.list_editors(self.editor_path):
-                raise EditorLaunchError(f"已有 FairyGUI 进程，但无法确认它当前打开的是 {project_file}。请手动打开目标工程并重新加载新版插件；不会按标题或启动参数复用，也不会重复启动。")
             launch_file = project_file.parent / ".agent" / "launch.json"
             previous = self._read_json(launch_file)
             if previous and time.time() - float(previous.get("timestamp", 0)) < 30:
@@ -104,6 +144,43 @@ class EditorLauncher:
             launch_file.write_text(json.dumps({"timestamp": time.time()}), encoding="utf-8")
             subprocess.Popen([str(self.editor_path), str(project_file)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
+
+    def _adopt_live_instance(self, project_file: Path) -> dict[str, Any] | None:
+        """目标工程已有存活实例但 exe 与配置不一致时，改用它而不是另开编辑器。"""
+        target = project_file.parent.resolve()
+        found = []
+        for _scope, status, base_path in self._iter_instances(project_file.parent / ".agent"):
+            if Path(base_path).resolve() != target or not self._is_live(status):
+                continue
+            found.append(status)
+        if not found:
+            return None
+        found.sort(key=lambda value: str(value.get("timestamp", "")), reverse=True)
+        chosen = found[-1]
+        live = self._windows_processes().inspect(chosen["editorProcessId"])
+        executable = str(live.executable) if live and live.executable else "未知路径"
+        configured = str(self.editor_path) if self.editor_path else "未配置"
+        chosen["editorIdentityError"] = (
+            f"正在使用的编辑器路径与配置不一致，已按工程实例记录接管：运行中 {executable}；"
+            f"FAIRYGUI_EDITOR_PATH={configured}。若这不是你要用的编辑器，请修正该环境变量后重开会话。"
+        )
+        return chosen
+
+    def _is_live(self, status: dict[str, Any]) -> bool:
+        """记录中的 PID 与启动时间与当前进程一致，才算是存活实例。"""
+        process = self._windows_processes().inspect(status["editorProcessId"])
+        return bool(process and process.started_at == status["editorProcessStartedAt"])
+
+    def inspect_editor(self, pid: Any, started_at: Any):
+        """按 PID 与启动时间核对进程身份；不一致时返回 None。"""
+        if not isinstance(pid, int) or pid <= 0:
+            return None
+        process = self._windows_processes().inspect(pid)
+        if process is None:
+            return None
+        if isinstance(started_at, str) and process.started_at != started_at:
+            return None
+        return process
 
     @staticmethod
     def _find_default_editor() -> Path | None:

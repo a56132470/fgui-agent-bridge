@@ -1,4 +1,4 @@
-# IL2CPP 可读取自身 PID，但不支持 Process.StartTime；仅在插件初始化时查询指定 PID。
+﻿# IL2CPP 可读取自身 PID，但不支持 Process.StartTime；仅在插件初始化时查询指定 PID。
 param(
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$EditorProcessId,
     [Parameter(Mandatory = $true)][string]$OutputPath
@@ -15,3 +15,4 @@ try {
 finally {
     $editorProcess.Dispose()
 }
+

@@ -119,6 +119,8 @@ class BridgeClient:
         self.heartbeat_max_age = heartbeat_max_age
         # 超时后的宽限期：请求可能已被认领并刚好在超时后完成。
         self.timeout_grace = timeout_grace
+        # 最近一次就绪判定中编辑器进程是否存活；用于区分“进程没了”和“进程忙”。
+        self._live_editor = False
 
     def project_context(self) -> ProjectContext:
         return self.locator.resolve()
@@ -175,10 +177,33 @@ class BridgeClient:
     def ensure_ready(self) -> dict[str, Any]:
         context = self.project_context()
         status = self.read_status()
-        if status and status.get("online") is True and status_age(status) <= self.heartbeat_max_age:
-            self._validate_status(status)
-            return status
+        if status and status.get("online") is True:
+            if status_age(status) <= self.heartbeat_max_age:
+                # 心跳新鲜本身就是存活证据，不必再查一次进程。
+                self._live_editor = True
+                self._validate_status(status)
+                return status
+            self._live_editor = self._is_live_instance(status)
+            if self._live_editor:
+                # 心跳只在编辑器窗口有更新脉冲时才刷新（窗口失焦、被遮挡或主线程被弹窗
+                # 阻塞时会停），而指令是靠队列送达的：先把窗口定向激活，等心跳恢复再投递。
+                # 恢复不了就快速失败，既不挂到调用超时，也绝不另开一个窗口。
+                self.launcher.wake(context.project_file, open_project=False)
+                deadline = time.monotonic() + self.heartbeat_max_age
+                while time.monotonic() < deadline:
+                    status = self.read_status()
+                    if status and status.get("online") is True and status_age(status) <= self.heartbeat_max_age:
+                        self._validate_status(status)
+                        return status
+                    time.sleep(0.2)
+                age = status_age(status) if status else float("inf")
+                raise BridgeError(
+                    f"FairyGUI Editor 进程仍在运行，但心跳已停 {age:.1f} 秒（阈值 {self.heartbeat_max_age:.0f} 秒）："
+                    "编辑器窗口没有更新脉冲，指令无法被认领。请手动把 FairyGUI 编辑器窗口切到前台"
+                    "（不要最小化、不要被其他窗口完全遮挡）后重试；Bridge 不会结束进程，也不会再开新窗口。"
+                )
 
+        self._live_editor = False
         try:
             self.launcher.wake(context.project_file, open_project=True)
         except EditorLaunchError as exc:
@@ -188,6 +213,7 @@ class BridgeClient:
             status = self.read_status()
             if status and status.get("online") is True and status_age(status) <= self.heartbeat_max_age:
                 self._validate_status(status)
+                self._live_editor = True
                 return status
             time.sleep(0.1)
 
@@ -198,7 +224,26 @@ class BridgeClient:
                 "并确认 FGUI Agent Bridge 插件已加载。"
             )
         raise BridgeError(
-            f"FairyGUI Agent Bridge 心跳仍未恢复（{age:.1f} 秒）。请检查 FairyGUI 编辑器控制台。"
+            f"FairyGUI Agent Bridge 心跳仍未恢复（{age:.1f} 秒，阈值 {self.heartbeat_max_age:.0f} 秒）。"
+            f"当前记录来自 PID {status.get('editorProcessId')}；心跳只在编辑器窗口处于前台、"
+            "主线程未被弹窗阻塞时刷新。请把 FairyGUI 编辑器窗口切到前台（不要最小化）后重试，"
+            "或关闭多余的 FairyGUI-Editor 进程只保留一个。"
+        )
+
+    def _is_live_instance(self, status: dict[str, Any]) -> bool:
+        """记录里的 PID 与启动时间仍指向同一个活进程时，队列可以照常投递。"""
+        try:
+            process = self.launcher.inspect_editor(status.get("editorProcessId"), status.get("editorProcessStartedAt"))
+        except (EditorLaunchError, OSError):
+            return False
+        return process is not None
+
+    def _stalled_message(self, action: str) -> str:
+        """编辑器进程还在但迟迟不认领请求时，给出可执行的排查方向。"""
+        return (
+            f"{action} 超时：FairyGUI Editor 进程仍在运行，但没有在超时内认领请求。"
+            "常见原因是编辑器窗口被最小化或主线程被弹窗阻塞（插件只在窗口有更新时才轮询队列）。"
+            "请把编辑器窗口切到前台后重试；Bridge 不会结束进程，也不会再开新窗口。"
         )
 
     def call_raw(
@@ -328,6 +373,8 @@ class BridgeClient:
         request_path.unlink(missing_ok=True)
         _timing["requestWaitMs"] = round((time.perf_counter() - wait_started) * 1000, 3)
         _timing["timeout"] = True
+        if self._live_editor:
+            raise TimeoutError(self._stalled_message(action) + f" (超时 {call_timeout:.1f}s)")
         raise TimeoutError(
             f"等待 FairyGUI 响应超时：{action} ({call_timeout:.1f}s)。"
             "请求可能已被编辑器认领并继续执行，重试前请先检查状态，避免写操作重复执行。"

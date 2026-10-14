@@ -125,8 +125,26 @@ class TestEditorLauncher(unittest.TestCase):
 
     def test_unknown_existing_editor_blocks_new_launch(self):
         self.processes.processes[99] = EditorProcess(99, None, None)
-        with self.assertRaisesRegex(EditorLaunchError, "不会.*重复启动"):
+        with self.assertRaisesRegex(EditorLaunchError, "不会另开窗口"):
             self.launcher.wake(self.project, open_project=True)
+        self.popen.assert_not_called()
+
+    def test_live_instance_with_other_install_path_is_adopted(self):
+        """编辑器换过安装目录时接管已在运行的实例，而不是再开一个窗口。"""
+        self.instance()
+        other_install = self.root / "another-install" / "FairyGUI-Editor.exe"
+        self.processes.processes[42] = EditorProcess(42, other_install, START)
+        self.assertTrue(self.launcher.wake(self.project, open_project=True))
+        self.assertEqual(self.processes.activations, [42])
+        self.popen.assert_not_called()
+
+    def test_stale_instance_record_is_not_adopted(self):
+        """记录里的 PID 已换主（启动时间不符）时不能接管，也不另开窗口。"""
+        self.instance()
+        self.processes.processes[42] = EditorProcess(42, self.root / "another-install/FairyGUI-Editor.exe", "202610140100001234567")
+        with self.assertRaisesRegex(EditorLaunchError, "不会另开窗口"):
+            self.launcher.wake(self.project, open_project=True)
+        self.assertEqual(self.processes.activations, [])
         self.popen.assert_not_called()
 
     def test_old_status_without_identity_is_offline(self):

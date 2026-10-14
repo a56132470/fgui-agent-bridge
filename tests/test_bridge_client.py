@@ -38,6 +38,8 @@ def _make_client(root: Path) -> BridgeClient:
     (queue_root / "responses").mkdir(parents=True)
     _write_fresh_status(queue_root)
     launcher = MagicMock()
+    # 缺省视为“没有存活实例”，需要走投递路径的用例自行返回一个进程对象。
+    launcher.inspect_editor.return_value = None
     launcher.read_project_status.side_effect = lambda _: json.loads((queue_root / "status.json").read_text(encoding="utf-8"))
     return BridgeClient(
         ProjectLocator(str(project_file)),
@@ -50,10 +52,11 @@ def _make_client(root: Path) -> BridgeClient:
 
 class TestBridgeClientTimeout(unittest.TestCase):
     def test_timeout_cleans_unclaimed_request_and_warns(self) -> None:
+        """心跳新鲜但请求迟迟没人认领：报“进程忙”，并清理未被认领的请求文件。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             client = _make_client(root)
-            with self.assertRaisesRegex(TimeoutError, "重复执行"):
+            with self.assertRaisesRegex(TimeoutError, "没有在超时内认领请求"):
                 client.call("ping")
             self.assertEqual(list((root / ".agent" / "requests").glob("*.json")), [])
             client.launcher.wake.assert_not_called()
@@ -121,6 +124,35 @@ class TestBridgeClientTimeout(unittest.TestCase):
             self.assertTrue((root / ".agent/instances/42-202610130100001234567/responses").is_dir())
             self.assertEqual(list((root / ".agent/requests").glob("*.json")), [])
             client.launcher.wake.assert_not_called()
+
+    def test_stale_heartbeat_with_live_instance_fails_fast_without_launching(self) -> None:
+        """心跳停了但进程还在：定向唤醒一次、恢复不了就快速失败，不投递也不另开窗口。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            client = _make_client(root)
+            status_file = root / ".agent/status.json"
+            status = json.loads(status_file.read_text(encoding="utf-8"))
+            status["timestamp"] = "2000-01-01T00:00:00Z"
+            status_file.write_text(json.dumps(status), encoding="utf-8")
+            client.launcher.inspect_editor.return_value = object()
+            with self.assertRaisesRegex(BridgeError, "心跳已停"):
+                client.call("get_tree")
+            client.launcher.wake.assert_called_once_with(root / "FairyGUI.fairy", open_project=False)
+            self.assertEqual(list((root / ".agent/requests").glob("*.json")), [])
+
+    def test_stale_heartbeat_with_dead_instance_wakes_editor(self) -> None:
+        """实例已不在时仍走启动流程，避免把“进程没了”当成“进程忙”。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            client = _make_client(root)
+            status_file = root / ".agent/status.json"
+            status = json.loads(status_file.read_text(encoding="utf-8"))
+            status["timestamp"] = "2000-01-01T00:00:00Z"
+            status_file.write_text(json.dumps(status), encoding="utf-8")
+            client.launcher.inspect_editor.return_value = None
+            with self.assertRaises(BridgeError):
+                client.call("get_tree")
+            client.launcher.wake.assert_called_once_with(root / "FairyGUI.fairy", open_project=True)
 
 
 if __name__ == "__main__":
