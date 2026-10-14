@@ -7,7 +7,7 @@ description: 当通过 MCP、CLI 或源码使用和维护独立 FGUI Agent Bridg
 
 ## 目标与真源
 
-本 Skill 面向独立 [Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge) 仓库。该仓库是 Bridge、MCP、CLI 和 Skill 的唯一开发真源，业务工程中的插件与 Skill 仅是同步快照。
+本 Skill 面向独立 [a56132470/fgui-agent-bridge](https://github.com/a56132470/fgui-agent-bridge) 仓库。该仓库是 Bridge、MCP、CLI 和 Skill 的唯一开发真源，业务工程中的插件与 Skill 仅是同步快照。
 
 - FairyGUI 插件源码：`plugin/main.ts`
 - FairyGUI 运行文件：`plugin/main.js`；修改源码后必须重新编译并一起提交
@@ -120,7 +120,7 @@ uv run python scripts/sync_to_project.py --choose-project --apply
 首次安装先克隆当前仓库并准备 Python 环境；前述同步命令均在该仓库目录执行：
 
 ```bash
-git clone https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone https://github.com/a56132470/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```
