@@ -57,7 +57,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 
 ## 🚀 安装指南
 
-安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
+安装源：[a56132470/fgui-agent-bridge](https://github.com/a56132470/fgui-agent-bridge)。Bridge 放在本机固定工具目录，与业务 FairyGUI 工程分开；同一开发者的多个工作副本可复用一份安装。Codex 推荐将本机启动信息放在用户级配置，将工程相对路径放在项目级配置。
 
 ### 方式一：AI 智能安装（推荐）
 
@@ -66,7 +66,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 ```text
 请帮我在这台电脑上完整安装 FairyGUI Agent Bridge。你可以执行终端命令和编辑本地文件，请实际完成安装，不要只给操作说明。
 
-源仓库：https://github.com/Henry22Chen/fgui-agent-bridge.git
+源仓库：https://github.com/a56132470/fgui-agent-bridge.git
 目标 FairyGUI 工程：优先从当前工作区自动查找 .fairy 文件；找不到或找到多个时停下来询问我。
 目标代码仓库：当前工作区；
 如果使用 Codex：复用本机已有 Bridge；将启动命令和 Editor 路径写入用户级 ~/.codex/config.toml，将 FGUI_PROJECT_PATH 的相对路径写入项目 .codex/config.toml，两层都不固定 cwd 或 fgui-agent-mcp 的 --project 参数。
@@ -83,7 +83,7 @@ Windows 连接会核对插件报告的当前工程目录、PID、进程启动时
 以下命令在本机固定工具目录中执行；已有 Bridge 时复用其安装，不必为每个工作副本重复克隆：
 
 ```bash
-git clone https://github.com/Henry22Chen/fgui-agent-bridge.git
+git clone https://github.com/a56132470/fgui-agent-bridge.git
 cd fgui-agent-bridge
 uv sync --frozen
 ```

@@ -22,8 +22,8 @@ dependencies = [
 design = ["psd-tools>=1.10,<2"]
 
 [project.urls]
-Homepage = "https://github.com/Henry22Chen/fgui-agent-bridge"
-Repository = "https://github.com/Henry22Chen/fgui-agent-bridge"
+Homepage = "https://github.com/a56132470/fgui-agent-bridge"
+Repository = "https://github.com/a56132470/fgui-agent-bridge"
 
 [project.scripts]
 fgui-agent = "fairygui_agent.cli:main"

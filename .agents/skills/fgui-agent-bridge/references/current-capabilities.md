@@ -6,7 +6,7 @@
 
 - Bridge 版本：`0.10.0`
 - FairyGUI 插件 ID：`com.fgui.agent-bridge`
-- 代码与安装源：[Henry22Chen/fgui-agent-bridge](https://github.com/Henry22Chen/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
+- 代码与安装源：[a56132470/fgui-agent-bridge](https://github.com/a56132470/fgui-agent-bridge)；业务工程只安装插件与 Skill 快照
 - 队列协议：`2.0`
 - FairyGUI Editor 基线：`6.1.4`
 - MCP 工具数：80；`fgui_status`、`fgui_use_project` 和 `fgui_diagnostics` 为 Python 本地能力
